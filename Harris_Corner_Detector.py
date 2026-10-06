@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
-from scipy.ndimage import gaussian_filter1d, gaussian_filter, convolve, rotate, zoom
+from scipy.ndimage import gaussian_filter1d, gaussian_filter, convolve, rotate, zoom, shift
 
 
 # ---------------------------------------------------------------
@@ -98,12 +98,13 @@ def non_max_suppression(H, theta, window=3):
 # Full pipeline
 # ---------------------------------------------------------------
 def harris_detector(I, method="gaussian", sigma_d=1.0, sigma_w=2.0,
-                    k=0.04, thresh_ratio=0.01, nms_window=3):
+                    k=0.04, thresh_ratio=0.01, nms_window=3,percentile=99.5):
     Ix, Iy = compute_derivatives(I, method, sigma_d)              # Step 1
     Ix2, Iy2, Ixy = compute_moments(Ix, Iy)                       # Step 2
     Ix2_s, Iy2_s, Ixy_s = smooth_moments(Ix2, Iy2, Ixy, sigma_w)  # Step 3
     H = harris_response(Ix2_s, Iy2_s, Ixy_s, k)                   # Step 4
-    theta = thresh_ratio * H.max()                                # theta > 0
+    ref = np.percentile(H[H > 0], percentile) if np.any(H > 0) else H.max()
+    theta = thresh_ratio * ref
     corners = non_max_suppression(H, theta, nms_window)           # Step 5
     return H, corners
 
@@ -129,7 +130,7 @@ def show_results(I, H, corners, title=""):
 # Transformations for the robustness tests
 # ---------------------------------------------------------------
 def rotate_image(I, angle):
-    return rotate(I, angle, reshape=True, mode="constant", cval=0.0)
+    return rotate(I, angle, reshape=True, mode="nearest")
 
 
 def scale_image(I, factor):
@@ -138,6 +139,9 @@ def scale_image(I, factor):
 
 def change_intensity(I, gain=1.0, offset=0.0):
     return np.clip(gain * I + offset, 0, 255)
+
+def translate_image(I, shift_row=0, shift_col=0):
+    return shift(I, (shift_row, shift_col), mode="wrap")
 
 
 def add_noise(I, sigma=10.0, seed=0):
@@ -152,7 +156,7 @@ if __name__ == '__main__':
     directory= "images/"
     images = ["CircleLineRect.png", "zurlim.png"]
 
-    # parameters (tune them per image)
+    # parameters
     params = dict(method="gaussian", sigma_d=1.0, sigma_w=2.0,
                   k=0.04, thresh_ratio=0.01, nms_window=3)
 
@@ -172,6 +176,7 @@ if __name__ == '__main__':
             "Brightness +50":         change_intensity(I, 1.0, 50),
             "Contrast x0.5":          change_intensity(I, 0.5, 0),
             "Gaussian noise (s=15)":  add_noise(I, 15),
+            "Translation (20, 30)": translate_image(I, 20, 30),
         }
         for name, It in transforms.items():
             Ht, Ct = harris_detector(It, **params)
