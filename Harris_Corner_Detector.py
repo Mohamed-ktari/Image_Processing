@@ -82,16 +82,24 @@ def non_max_suppression(H, theta, window=3):
     (window x window) neighbourhood (itself included).
     Returns an array of (row, col) corner coordinates.
     """
-    r = window // 2
+    r = window // 2  # half-width of the window to get the number of borders we need to add
+
+    # Pad the borders with -inf so edge pixels have a full neighbourhood
     padded = np.pad(H, r, mode="constant", constant_values=-np.inf)
-    local_max = np.full_like(H, -np.inf)
+
+    local_max = np.full_like(H, -np.inf)  # will hold the max of each neighbourhood
     rows, cols = H.shape
+
+    # Shift the image over every offset in the window and keep the maximum
     for di in range(2 * r + 1):
         for dj in range(2 * r + 1):
             shifted = padded[di:di + rows, dj:dj + cols]
             local_max = np.maximum(local_max, shifted)
+
+    # Corner = strong enough (>= theta) AND the biggest in its neighbourhood
     mask = (H >= theta) & (H == local_max)
-    return np.argwhere(mask)
+
+    return np.argwhere(mask)  # (row, col) of each corner
 
 
 # ---------------------------------------------------------------
@@ -104,7 +112,7 @@ def harris_detector(I, method="gaussian", sigma_d=1.0, sigma_w=2.0,
     Ix2_s, Iy2_s, Ixy_s = smooth_moments(Ix2, Iy2, Ixy, sigma_w)  # Step 3
     H = harris_response(Ix2_s, Iy2_s, Ixy_s, k)                   # Step 4
     ref = np.percentile(H[H > 0], percentile) if np.any(H > 0) else H.max()
-    theta = thresh_ratio * ref
+    theta = thresh_ratio * ref                                    #dynamic Theta
     corners = non_max_suppression(H, theta, nms_window)           # Step 5
     return H, corners
 
