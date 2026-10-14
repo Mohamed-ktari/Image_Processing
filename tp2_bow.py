@@ -191,7 +191,7 @@ if __name__ == "__main__":
 
     print("\nExperiment 2 using 20% of each class:")
 
-    all_classes = read_class_names(os.path.join(data_root, "class_names.txt"))
+    all_classes = read_class_names("STL10/stl10_binary/class_names.txt")
     print("Classes:", all_classes)
 
     train_images_10, train_labels_10 = [], []
