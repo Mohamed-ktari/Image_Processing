@@ -39,9 +39,17 @@ def dense_regular_grid(image, n_points_x, n_points_y):
     x_grid, y_grid = np.meshgrid(x, y)
     return x_grid.ravel(), y_grid.ravel()
 
+# SIFT-style normalisation: unit length, clip at 0.2, unit length again
+def normalize_descriptors(descriptors):
+    norms = np.linalg.norm(descriptors, axis=1, keepdims=True)
+    descriptors = descriptors / (norms + 1e-7)
+    descriptors = np.minimum(descriptors, 0.2)
+    norms = np.linalg.norm(descriptors, axis=1, keepdims=True)
+    descriptors = descriptors / (norms + 1e-7)
+    return descriptors
 
 # step 2: HOG descriptors
-def hog_features(image, x_indices, y_indices):
+def hog_features(image, x_indices, y_indices, use_SIFT_normalization=True):
     image = image.astype(float) # converting to float to avoid overflow in gradient computation
 
     # reflect padding so every point gets a full 16x16 patch centered on it, like for example the point (0, 0) which would need pixels from (-8, -8) to (7, 7)
@@ -72,6 +80,9 @@ def hog_features(image, x_indices, y_indices):
                 descriptor.extend(hist)
 
         descriptors[point] = descriptor
+
+    if use_SIFT_normalization:
+        descriptors = normalize_descriptors(descriptors)
 
     return descriptors
 
@@ -123,9 +134,10 @@ def random_classifier(n_test, n_classes):
 
 if __name__ == "__main__":
     data_root = "STL10/stl10_raw"
-    classes = ["airplane", "car"] # for the first case with 2 classes
+    classes = ["bird", "horse"] # for the first case with 2 classes
     n_points_x = 8
     n_points_y = 8
+    use_SIFT_normalization = True
 
     # Fixed seed so the random 20% subset (and the K-means runs) are the same every time
     np.random.seed(0)
@@ -153,10 +165,10 @@ if __name__ == "__main__":
 
     # HOG descriptors for every image
     for img in train_images:
-        train_descriptors.append(hog_features(img, x_grid, y_grid))
+        train_descriptors.append(hog_features(img, x_grid, y_grid, use_SIFT_normalization))
 
     for img in test_images:
-        test_descriptors.append(hog_features(img, x_grid, y_grid))
+        test_descriptors.append(hog_features(img, x_grid, y_grid, use_SIFT_normalization))
 
     # All training descriptors stacked together, used for K-means
     all_train_descriptors = np.vstack(train_descriptors)
@@ -187,7 +199,7 @@ if __name__ == "__main__":
     print(f"Random:   mean = {np.mean(random_accuracies):.4f}, std = {np.std(random_accuracies):.4f}")
 
     # Experiment 2 using 20% of each class
-    fraction_10_classes = 0.2 # use 20% of each class
+    fraction_10_classes = 0.1 # use 20% of each class
 
     print("\nExperiment 2 using 20% of each class:")
 
@@ -196,6 +208,7 @@ if __name__ == "__main__":
 
     train_images_10, train_labels_10 = [], []
     test_images_10, test_labels_10 = [], []
+
     for label, class_name in enumerate(all_classes):
         imgs = load_images_from_folder(os.path.join(data_root, "train", class_name), fraction_10_classes)
         train_images_10 += imgs
@@ -209,11 +222,11 @@ if __name__ == "__main__":
 
     train_descriptors_10 = []
     for img in train_images_10:
-        train_descriptors_10.append(hog_features(img, x_grid, y_grid))
+        train_descriptors_10.append(hog_features(img, x_grid, y_grid, use_SIFT_normalization))
 
     test_descriptors_10 = []
     for img in test_images_10:
-        test_descriptors_10.append(hog_features(img, x_grid, y_grid))
+        test_descriptors_10.append(hog_features(img, x_grid, y_grid, use_SIFT_normalization))
 
     all_train_descriptors_10 = np.vstack(train_descriptors_10)
 
@@ -264,14 +277,55 @@ if __name__ == "__main__":
         l1_means.append(np.mean(l1_accuracies))
         l1_stds.append(np.std(l1_accuracies))
 
-    # Plot: accuracy vs K for L1 and L2
+    # Plot for the 2 classes: accuracy vs K for L1 and L2
+    plt.figure()
     plt.errorbar(K_values, l2_means, yerr=l2_stds, marker="o", capsize=4, label="L2")
     plt.errorbar(K_values, l1_means, yerr=l1_stds, marker="o", capsize=4, label="L1")
     plt.axhline(1 / len(classes), color="gray", linestyle="--", label="random (chance)")
     plt.xlabel("K (number of visual words)")
     plt.ylabel("Test accuracy")
-    plt.title("BoW + nearest neighbor: L1 vs L2")
+    plt.title("BoW + nearest neighbor: L1 vs L2 (2 classes)")
     plt.legend()
     plt.grid(True)
-    plt.savefig("accuracy_vs_K.png")
+    plt.savefig("accuracy_vs_K_2_classes.png")
+
+    # Experiment 3 with the 10 classes (20% of each class), L1 vs L2 for different values of K
+    print("\nExperiment 3 with the 10 classes, doing the L1 vs L2 for different K:")
+    l2_means_10, l2_stds_10 = [], []
+    l1_means_10, l1_stds_10 = [], []
+
+    for k in K_values:
+        l2_accuracies = []
+        l1_accuracies = []
+        for run in range(n_runs):
+            centroids = kmeans(all_train_descriptors_10, k, n_iter)
+            train_hist, y_train = bow_histograms(train_descriptors_10, train_labels_10, centroids)
+            test_hist, y_test = bow_histograms(test_descriptors_10, test_labels_10, centroids)
+
+            predictions_l2 = nearest_neighbor_classifier(train_hist, y_train, test_hist, metric="euclidean")
+            predictions_l1 = nearest_neighbor_classifier(train_hist, y_train, test_hist, metric="cityblock")
+            l2_accuracies.append(np.mean(predictions_l2 == y_test))
+            l1_accuracies.append(np.mean(predictions_l1 == y_test))
+
+        print(f"K = {k}: L2 mean = {np.mean(l2_accuracies):.4f} (std {np.std(l2_accuracies):.4f}), "
+              f"L1 mean = {np.mean(l1_accuracies):.4f} (std {np.std(l1_accuracies):.4f})")
+
+        l2_means_10.append(np.mean(l2_accuracies))
+        l2_stds_10.append(np.std(l2_accuracies))
+        l1_means_10.append(np.mean(l1_accuracies))
+        l1_stds_10.append(np.std(l1_accuracies))
+
+    # Plot for the 10 classes: accuracy vs K for L1 and L2
+    plt.figure()
+    plt.errorbar(K_values, l2_means_10, yerr=l2_stds_10, marker="o", capsize=4, label="L2")
+    plt.errorbar(K_values, l1_means_10, yerr=l1_stds_10, marker="o", capsize=4, label="L1")
+    plt.axhline(1 / len(all_classes), color="gray", linestyle="--", label="random (chance)")
+    plt.xlabel("K (number of visual words)")
+    plt.ylabel("Test accuracy")
+    plt.title("BoW + nearest neighbor: L1 vs L2 (10 classes, 20% of each)")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig("accuracy_vs_K_10_classes.png")
+
+    # Show both figures at the end
     plt.show()
